@@ -425,7 +425,9 @@ function submitSuggestion(inputEl) {
   }
 
   const id = uid();
-  songs.push({ id, title, link, votes: '0', current: 'FALSE', done: 'FALSE' });
+  songs.push({ id, title, link, votes: '1', current: 'FALSE', done: 'FALSE' });
+  votedIds.add(id);
+  localStorage.setItem(`singin_voted_s${sessionNum}`, JSON.stringify([...votedIds]));
 
   inputEl.value = '';
   selectedSong  = null;

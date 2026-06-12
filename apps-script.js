@@ -6,9 +6,9 @@
 // These are never stored in the spreadsheet.
 // ---------------------------------------------------------------------------
 const SESSIONS = {
-  '1': 'dcsc26-1',
-  '2': 'dcsc26-2',
-  '3': 'dcsc26-3',
+  '1': 'changeme-1',
+  '2': 'changeme-2',
+  '3': 'changeme-3',
 };
 
 // ---------------------------------------------------------------------------
@@ -20,7 +20,6 @@ const SESSIONS = {
 function setupSessionSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
   const headers = ['id', 'title', 'link', 'votes', 'current', 'done'];
-  const checkboxCols = ['current', 'done'];
 
   for (let i = 1; i <= Object.keys(SESSIONS).length; i++) {
     const name = `session_${i}`;
@@ -37,13 +36,6 @@ function setupSessionSheets() {
     headerRange.setValues([headers]);
     headerRange.setFontWeight('bold').setBackground('#f3f3f3');
     sheet.setFrozenRows(1);
-
-    // Checkbox validation on data rows
-    const rule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
-    checkboxCols.forEach(colName => {
-      const colIndex = headers.indexOf(colName) + 1;
-      sheet.getRange(2, colIndex, 1000, 1).setDataValidation(rule);
-    });
   }
 
   SpreadsheetApp.getUi().alert('Session sheets created: ' +
@@ -109,10 +101,18 @@ function doPost(e) {
     set('id',         String(p.id || Utilities.getUuid()));
     set('title',      String(p.title || ''));
     set('link',    String(p.link || ''));
-    set('votes',   0);
+    set('votes',   1);
     set('current',    false);
     set('done',       false);
     sheet.appendRow(newRow);
+
+    const newRowIndex = sheet.getLastRow();
+    const checkboxRule = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+    ['current', 'done'].forEach(colName => {
+      const c = headers.indexOf(colName) + 1;
+      if (c > 0) sheet.getRange(newRowIndex, c).setDataValidation(checkboxRule);
+    });
+
     return respond({ success: true });
   }
 
