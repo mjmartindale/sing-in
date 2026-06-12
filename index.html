@@ -110,7 +110,6 @@
       box-shadow: var(--shadow);
       transition: opacity 0.15s;
     }
-    .song-card.flagged { opacity: 0.5; font-style: italic; }
 
     /* Vote button */
     .vote-btn {
@@ -146,7 +145,6 @@
       padding: 0.12rem 0.42rem;
       border-radius: 99px;
     }
-    .badge-info { background: #fff3cd; color: #7d5a00; }
 
     /* Song action icons */
     .song-actions { display: flex; align-items: center; gap: 0.3rem; flex-shrink: 0; }
@@ -167,7 +165,6 @@
       -webkit-tap-highlight-color: transparent;
     }
     .icon-btn:hover { color: var(--text); background: var(--bg); }
-    .icon-btn.flag-btn:hover { color: var(--danger); }
 
     /* ── Suggestion form ── */
     .suggest-section {
@@ -257,58 +254,12 @@
     .full-page-msg h2 { font-size: 1.3rem; margin-bottom: 0.6rem; }
     .full-page-msg p  { color: var(--muted); font-size: 0.93rem; line-height: 1.5; }
 
-    /* ── Flag dialog ── */
-    .dialog-overlay {
-      position: fixed;
-      inset: 0;
-      background: rgba(0,0,0,0.42);
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      z-index: 200;
-      padding: 1rem;
-    }
-    .dialog {
-      background: #fff;
-      border-radius: 14px;
-      padding: 1.4rem 1.4rem 1.2rem;
-      max-width: 310px;
-      width: 100%;
-      box-shadow: 0 8px 32px rgba(0,0,0,0.22);
-    }
-    .dialog h3 { font-size: 1.02rem; font-weight: 700; margin-bottom: 0.45rem; }
-    .dialog p  { color: var(--muted); font-size: 0.88rem; line-height: 1.45; margin-bottom: 1.15rem; }
-    .dialog-btns { display: flex; gap: 0.5rem; }
-    .btn {
-      flex: 1;
-      padding: 0.65rem;
-      border-radius: 8px;
-      border: none;
-      font-size: 0.93rem;
-      font-weight: 600;
-      cursor: pointer;
-      font-family: inherit;
-    }
-    .btn-ghost  { background: var(--bg); color: var(--text); }
-    .btn-danger { background: var(--danger); color: #fff; }
-    .btn-ghost:hover  { background: var(--border); }
-    .btn-danger:hover { background: #c62828; }
   </style>
 </head>
 <body>
 
 <div id="root"><div class="full-page-msg"><p>Loading&hellip;</p></div></div>
 
-<div id="flag-dialog" class="dialog-overlay" style="display:none" role="dialog" aria-modal="true">
-  <div class="dialog">
-    <h3>Flag this song?</h3>
-    <p id="flag-dialog-body"></p>
-    <div class="dialog-btns">
-      <button class="btn btn-ghost"  id="flag-cancel">Cancel</button>
-      <button class="btn btn-danger" id="flag-confirm">Flag</button>
-    </div>
-  </div>
-</div>
 
 <script src="config.js"></script>
 <script>
@@ -409,9 +360,10 @@ async function init() {
   } catch {}
 
   try {
-    const config = await fetchSheet('config');
-    const row = config.find(r => String(r.session) === String(sessionNum));
-    if (!row || row.password !== sessionPassword) {
+    const validateUrl = `${APPS_SCRIPT_URL}?action=validate&s=${encodeURIComponent(sessionNum)}&pw=${encodeURIComponent(sessionPassword)}`;
+    const validateRes = await fetch(validateUrl);
+    const { valid } = await validateRes.json();
+    if (!valid) {
       return fullMsg('Access Denied', 'Invalid session link. Please scan the correct QR code.');
     }
 
@@ -452,42 +404,12 @@ function upvote(id) {
   apiWrite({ action: 'upvote', id });
 }
 
-function requestFlag(id, title) {
-  const overlay  = document.getElementById('flag-dialog');
-  const body     = document.getElementById('flag-dialog-body');
-  const cancelEl = document.getElementById('flag-cancel');
-  const confirmEl= document.getElementById('flag-confirm');
-
-  body.textContent = `Flag "${title}" as inappropriate?`;
-  overlay.style.display = 'flex';
-
-  function close() {
-    overlay.style.display = 'none';
-    cancelEl.removeEventListener('click', close);
-    confirmEl.removeEventListener('click', doFlag);
-    overlay.removeEventListener('click', onOverlay);
-  }
-  function doFlag() {
-    const song = songs.find(s => s.id === id);
-    if (song) song.flagged = 'TRUE';
-    renderSongList();
-    apiWrite({ action: 'flag', id });
-    close();
-  }
-  function onOverlay(e) { if (e.target === overlay) close(); }
-
-  cancelEl.addEventListener('click', close);
-  confirmEl.addEventListener('click', doFlag);
-  overlay.addEventListener('click', onOverlay);
-}
 
 function submitSuggestion(inputEl) {
-  const raw = inputEl.value.trim();
-  if (!raw) return;
+  if (!selectedSong) return;
 
-  const title     = selectedSong ? selectedSong.title : raw;
-  const link      = selectedSong ? (selectedSong.link || '') : '';
-  const needsInfo = !selectedSong || !selectedSong.link;
+  const title = selectedSong.title;
+  const link  = selectedSong.link || '';
 
   const doneSong = songs.find(s => s.title.toLowerCase() === title.toLowerCase() && isTrue(s.done));
   if (doneSong) {
@@ -502,8 +424,7 @@ function submitSuggestion(inputEl) {
   }
 
   const id = uid();
-  songs.push({ id, title, link, needs_info: needsInfo ? 'TRUE' : 'FALSE',
-               votes: '0', current: 'FALSE', done: 'FALSE', flagged: 'FALSE' });
+  songs.push({ id, title, link, votes: '0', current: 'FALSE', done: 'FALSE' });
 
   inputEl.value = '';
   selectedSong  = null;
@@ -511,7 +432,7 @@ function submitSuggestion(inputEl) {
   updateSubmitBtn(inputEl);
   showMsg('ok', `"${title}" added to the queue!`);
   renderSongList();
-  apiWrite({ action: 'suggest', id, title, link, needs_info: String(needsInfo) });
+  apiWrite({ action: 'suggest', id, title, link });
 }
 
 // ── Autocomplete ───────────────────────────────────────────────────────────
@@ -523,6 +444,7 @@ function getSuggestions(q) {
     .filter(song => {
       if (doneTitles.has(song.title.toLowerCase())) return false;
       if (song.title.toLowerCase().includes(lq)) return true;
+      if (song.number && song.number.toLowerCase().includes(lq)) return true;
       return (song.alternates || '').split(',').some(a => a.trim().toLowerCase().includes(lq));
     })
     .slice(0, 10);
@@ -546,10 +468,11 @@ function openAC(items, inputEl) {
     t.textContent = song.title;
     div.appendChild(t);
 
-    if (song.collection) {
+    const sub = [song.collection, song.number ? `#${song.number}` : ''].filter(Boolean).join(' · ');
+    if (sub) {
       const s = document.createElement('div');
       s.className = 'ac-item-sub';
-      s.textContent = song.collection;
+      s.textContent = sub;
       div.appendChild(s);
     }
 
@@ -604,7 +527,7 @@ function renderApp() {
         <div id="suggest-msg"></div>
         <div class="autocomplete-wrap">
           <input type="text" id="suggest-input" class="suggest-input"
-            placeholder="Start typing a title&hellip;"
+            placeholder="Search the catalog&hellip;"
             autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
             aria-label="Song title" aria-autocomplete="list" aria-controls="ac-list">
           <div id="ac-list" class="autocomplete-list" style="display:none" role="listbox"></div>
@@ -651,11 +574,10 @@ function renderSongList() {
   list.className = 'song-list';
 
   visible.forEach(song => {
-    const voted   = votedIds.has(song.id);
-    const flagged = isTrue(song.flagged);
+    const voted = votedIds.has(song.id);
 
     const card = document.createElement('div');
-    card.className = 'song-card' + (flagged ? ' flagged' : '');
+    card.className = 'song-card';
 
     // Vote button
     const vBtn = document.createElement('button');
@@ -675,19 +597,12 @@ function renderSongList() {
     titleEl.textContent = song.title;
     info.appendChild(titleEl);
 
-    if (isTrue(song.needs_info)) {
-      const badges = document.createElement('div');
-      badges.className = 'song-badges';
-      badges.innerHTML = '<span class="badge badge-info">needs link</span>';
-      info.appendChild(badges);
-    }
     card.appendChild(info);
 
-    // Actions: link + flag
-    const actions = document.createElement('div');
-    actions.className = 'song-actions';
-
+    // Actions: link only
     if (song.link) {
+      const actions = document.createElement('div');
+      actions.className = 'song-actions';
       const lnk = document.createElement('a');
       lnk.className = 'icon-btn';
       lnk.href      = song.link;
@@ -697,19 +612,8 @@ function renderSongList() {
       lnk.setAttribute('aria-label', 'Open lyrics or chords');
       lnk.textContent = '♪';
       actions.appendChild(lnk);
+      card.appendChild(actions);
     }
-
-    if (!flagged) {
-      const flg = document.createElement('button');
-      flg.className = 'icon-btn flag-btn';
-      flg.title     = 'Flag as inappropriate';
-      flg.setAttribute('aria-label', `Flag "${song.title}" as inappropriate`);
-      flg.textContent = '⚑';
-      flg.addEventListener('click', () => requestFlag(song.id, song.title));
-      actions.appendChild(flg);
-    }
-
-    card.appendChild(actions);
     list.appendChild(card);
   });
 
@@ -727,7 +631,7 @@ function showMsg(type, text) {
 
 function updateSubmitBtn(inputEl) {
   const btn = document.getElementById('suggest-btn');
-  if (btn) btn.disabled = !inputEl.value.trim();
+  if (btn) btn.disabled = !selectedSong;
 }
 
 // ── Input wiring ───────────────────────────────────────────────────────────

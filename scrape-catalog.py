@@ -2,11 +2,11 @@
 """
 scrape-catalog.py
 
-Scrapes the Gospel Library for hymn/song titles, links, and first lines,
+Scrapes the Gospel Library for hymn/song titles, numbers, and links,
 then writes catalog.csv ready to import into the Google Sheet.
 
-Collections:
-  - Hymns for Home and Church  (new digital hymnbook; note: not "Family")
+Collections scraped:
+  - Hymns for Home and Church  (new digital hymnbook; note: "Church" not "Family")
   - Hymns                      (1985 standard hymnal)
   - Children's Songbook
 
@@ -14,9 +14,8 @@ Dependencies:
     pip install requests beautifulsoup4
 
 Usage:
-    python scrape-catalog.py              # full run (fetches each song for first-line alternates)
-    python scrape-catalog.py --fast       # TOC only, leaves alternates blank
-    python scrape-catalog.py --out my.csv
+    python scrape-catalog.py
+    python scrape-catalog.py --out ~/Desktop/catalog.csv
 """
 
 import argparse
@@ -27,7 +26,7 @@ import time
 
 try:
     import requests
-    from bs4 import BeautifulSoup
+    from bs4 import BeautifulSoup, NavigableString
 except ImportError:
     sys.exit("Missing dependencies. Run:\n  pip install requests beautifulsoup4")
 
@@ -39,23 +38,22 @@ BASE = "https://www.churchofjesuschrist.org"
 
 COLLECTIONS = [
     {
-        "name": "Hymns for Home and Church",
+        "name":   "Hymns for Home and Church",
         "toc":    "/study/music/hymns-for-home-and-church?lang=eng",
         "prefix": "/study/music/hymns-for-home-and-church/",
     },
     {
-        "name": "Hymns",
+        "name":   "Hymns",
         "toc":    "/study/manual/hymns?lang=eng",
         "prefix": "/study/manual/hymns/",
     },
     {
-        "name": "Children's Songbook",
+        "name":   "Children's Songbook",
         "toc":    "/study/manual/childrens-songbook?lang=eng",
         "prefix": "/study/manual/childrens-songbook/",
     },
 ]
 
-# Slugs on TOC pages that are metadata/intro pages, not songs
 SKIP_SLUGS = {
     "table-of-contents",
     "about-hymns-for-home-and-church",
@@ -80,9 +78,6 @@ HEADERS = {
     "Accept-Language": "en-US,en;q=0.9",
 }
 
-SONG_DELAY       = 0.5  # seconds between per-song requests
-COLLECTION_PAUSE = 3    # seconds between collections
-
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
@@ -92,6 +87,7 @@ def fetch(session, url, label=""):
         try:
             r = session.get(url, headers=HEADERS, timeout=20)
             if r.status_code == 200:
+                r.encoding = "utf-8"  # force UTF-8 to prevent â€™-style mangling
                 return r.text
             if r.status_code == 429:
                 wait = 30 * (attempt + 1)
@@ -106,97 +102,153 @@ def fetch(session, url, label=""):
     return None
 
 # ---------------------------------------------------------------------------
+# Number extraction helpers
+# ---------------------------------------------------------------------------
+
+def number_from_li(a_tag):
+    """
+    For hymns whose number lives OUTSIDE the <a> tag (standard Hymns TOC),
+    collect the text of the parent <li> that isn't inside the <a>, and
+    return it if it looks like a bare number (e.g. "30" or "20a").
+    """
+    li = a_tag.find_parent("li")
+    if not li:
+        return ""
+
+    parts = []
+    for child in li.children:
+        if child is a_tag:
+            continue
+        if isinstance(child, NavigableString):
+            parts.append(str(child))
+        elif getattr(child, "name", None) and child.name != "a":
+            parts.append(child.get_text(" ", strip=True))
+
+    candidate = re.sub(r"\s+", " ", " ".join(parts)).strip().rstrip(".")
+    m = re.fullmatch(r"\d+[a-z]?", candidate, re.IGNORECASE)
+    return m.group(0) if m else ""
+
+
+def split_number_title(raw):
+    """
+    Try to split a raw link-text string into (number, title).
+
+    Three cases observed:
+      Case 1 — space separator:    "1001 Come, Thou Fount …"
+      Case 2 — no space (concat):  "20aA Song of Thanks"
+      Case 3 — number not in link: "The Morning Breaks"  → returns ("", raw)
+    """
+    # Case 1: digit(s) + optional letter + whitespace + title
+    m = re.match(r"^(\d+[a-z]?)\s+(.+)$", raw, re.IGNORECASE)
+    if m:
+        return m.group(1), m.group(2).strip()
+
+    # Case 2: digit(s) + letter immediately followed by capital letter
+    m = re.match(r"^(\d+[a-z])([A-Z].*)$", raw)
+    if m:
+        return m.group(1), m.group(2).strip()
+
+    return "", raw
+
+# ---------------------------------------------------------------------------
 # TOC parsing
 # ---------------------------------------------------------------------------
 
 def parse_toc(html, prefix):
-    """Return list of {title, url} dicts from a collection's TOC page."""
+    """Return list of {title, number, url} dicts from a collection TOC page."""
     soup = BeautifulSoup(html, "html.parser")
     songs = []
     seen = set()
     bare_prefix = prefix.rstrip("/")
 
-    for a in soup.find_all("a", href=True):
-        path = a["href"].split("?")[0].rstrip("/")
+    for element in soup.find_all("a", href=True):
+
+        path = element["href"].split("?")[0].rstrip("/")
 
         if not path.startswith(bare_prefix + "/"):
             continue
 
-        slug = path[len(bare_prefix) + 1:].split("/")[0]  # one level only
+        slug = path[len(bare_prefix) + 1:].split("/")[0]
         if not slug or slug in SKIP_SLUGS:
             continue
         if path in seen:
             continue
         seen.add(path)
 
-        raw = a.get_text(" ", strip=True)
-        # Strip leading hymn numbers: "1001 Come, Thou Fount" → "Come, Thou Fount"
-        title = re.sub(r"^\d+\s+", "", raw).strip()
+        raw = re.sub(r"\s+", " ", element.get_text(" ", strip=True)).strip()
+        if not raw:
+            continue
+
+        number, title = split_number_title(raw)
+
+        if not number:
+            number = number_from_li(element)
+
         if not title:
             continue
 
-        songs.append({"title": title, "url": BASE + path + "?lang=eng"})
+        songs.append({
+            "title":  title,
+            "number": number,
+            "url":    BASE + path + "?lang=eng",
+        })
 
     return songs
 
 # ---------------------------------------------------------------------------
-# First-line extraction
+# Deduplication
 # ---------------------------------------------------------------------------
 
-def extract_first_line(html, title):
+def deduplicate(rows):
     """
-    Best-effort extraction of the opening lyric line from a song page.
-    Returns an empty string when nothing reliable is found.
+    Rule 1 — Parenthetical variants: if a collection contains both "Title"
+    and "Title (X)" (e.g. Men's Choir), drop the parenthetical version.
 
-    Strategy: dump page text, locate the title, then scan forward for the
-    first line that looks like a lyric (starts with a capital, reasonable
-    length, not metadata).
+    Rule 2 — Children's Songbook vs Hymns: if a Children's Songbook title
+    exactly matches a Hymns title, drop the Children's Songbook entry.
     """
-    soup = BeautifulSoup(html, "html.parser")
-    for tag in soup(["script", "style", "nav", "footer", "header"]):
-        tag.decompose()
+    # Collect rows by collection, preserving encounter order
+    collection_order = []
+    by_coll: dict[str, list] = {}
+    for row in rows:
+        c = row["collection"]
+        if c not in by_coll:
+            by_coll[c] = []
+            collection_order.append(c)
+        by_coll[c].append(row)
 
-    lines = [ln.strip() for ln in soup.get_text(separator="\n").splitlines()]
-    lines = [ln for ln in lines if ln]
+    # Rule 1
+    for coll in collection_order:
+        plain_titles = {
+            row["title"].lower()
+            for row in by_coll[coll]
+            if not re.search(r"\s*\([^)]+\)\s*$", row["title"])
+        }
+        filtered = []
+        for row in by_coll[coll]:
+            m = re.search(r"^(.+?)\s*\([^)]+\)\s*$", row["title"])
+            if m and m.group(1).strip().lower() in plain_titles:
+                continue  # plain version exists — drop the parenthetical variant
+            filtered.append(row)
+        by_coll[coll] = filtered
 
-    title_norm = title.lower().strip(".,!?'\"")
+    # Rule 2
+    hymns_titles = {row["title"].lower() for row in by_coll.get("Hymns", [])}
+    cs = "Children's Songbook"
+    if cs in by_coll:
+        by_coll[cs] = [
+            row for row in by_coll[cs]
+            if row["title"].lower() not in hymns_titles
+        ]
 
-    # Find where the song title appears in the text stream
-    title_idx = next(
-        (i for i, ln in enumerate(lines)
-         if ln.lower().strip(".,!?'\"") == title_norm),
-        None,
-    )
-    start = (title_idx + 1) if title_idx is not None else 0
-
-    skip_patterns = re.compile(
-        r"lyrics only|pdf|sheet music|text:|music:|"
-        r"copyright|©|all rights reserved|lang=eng|https?://|breadcrumb",
-        re.IGNORECASE,
-    )
-
-    for line in lines[start:]:
-        if skip_patterns.search(line):
-            continue
-        if re.fullmatch(r"[\d\s.,;:]+", line):   # pure verse numbers / punctuation
-            continue
-        if not 8 <= len(line) <= 150:
-            continue
-        if not re.match(r'^[A-Z“‘\'"(]', line):  # must start with capital
-            continue
-        if line.lower().strip(".,!?'\"") == title_norm:     # skip title repeat
-            continue
-
-        return re.sub(r"\s+", " ", line)
-
-    return ""
+    return [row for coll in collection_order for row in by_coll[coll]]
 
 # ---------------------------------------------------------------------------
 # Per-collection scrape
 # ---------------------------------------------------------------------------
 
-def scrape_collection(col, session, fetch_details):
-    name   = col["name"]
+def scrape_collection(col, session):
+    name    = col["name"]
     toc_url = BASE + col["toc"]
 
     print(f"\n{'─' * 55}")
@@ -209,27 +261,16 @@ def scrape_collection(col, session, fetch_details):
         return []
 
     songs = parse_toc(html, col["prefix"])
-    print(f"  {len(songs)} songs in TOC")
+    print(f"  {len(songs)} songs found")
 
     rows = []
-    for i, song in enumerate(songs, 1):
-        alt = ""
-        if fetch_details:
-            time.sleep(SONG_DELAY)
-            song_html = fetch(session, song["url"], song["title"])
-            if song_html:
-                alt = extract_first_line(song_html, song["title"])
-
-        padded = f"[{i:3}/{len(songs)}]"
-        if alt:
-            preview = alt[:50] + ("…" if len(alt) > 50 else "")
-            print(f"  {padded} {song['title']}\n           → {preview}")
-        else:
-            print(f"  {padded} {song['title']}")
-
+    for song in songs:
+        num = song["number"] or ""
+        print(f"    {num:>5}  {song['title']}")
         rows.append({
             "title":      song["title"],
-            "alternates": alt,
+            "number":     num,
+            "alternates": "",
             "link":       song["url"],
             "collection": name,
         })
@@ -245,36 +286,34 @@ def main():
         description="Scrape Gospel Library hymn catalog → catalog.csv",
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    ap.add_argument("--out",  default="catalog.csv",
+    ap.add_argument("--out", default="catalog.csv",
                     help="Output CSV path (default: catalog.csv)")
-    ap.add_argument("--fast", action="store_true",
-                    help="Skip per-song fetches; titles and links only (no alternates)")
     args = ap.parse_args()
-
-    if args.fast:
-        print("Mode: fast (TOC only — alternates will be blank)")
-    else:
-        print("Mode: full (fetching each song page for first-line alternates)")
-        print(f"  ~{SONG_DELAY}s per request; Ctrl-C to abort early")
 
     session  = requests.Session()
     all_rows = []
 
     for i, col in enumerate(COLLECTIONS):
-        rows = scrape_collection(col, session, not args.fast)
+        rows = scrape_collection(col, session)
         all_rows.extend(rows)
-        if not args.fast and i < len(COLLECTIONS) - 1:
-            time.sleep(COLLECTION_PAUSE)
+        if i < len(COLLECTIONS) - 1:
+            time.sleep(1)
 
+    before   = len(all_rows)
+    all_rows = deduplicate(all_rows)
+    dropped  = before - len(all_rows)
+
+    fieldnames = ["title", "number", "alternates", "link", "collection"]
     with open(args.out, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["title", "alternates", "link", "collection"])
+        writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
         writer.writerows(all_rows)
 
     print(f"\nDone — {len(all_rows)} songs written to {args.out}")
-    if not args.fast:
-        print("Tip: review the 'alternates' column; the first-line heuristic may")
-        print("     miss or misidentify lines on some pages.")
+    if dropped:
+        print(f"  ({dropped} duplicate(s) removed)")
+    print("\nReminder: fill in the 'alternates' column manually for any songs")
+    print("you want searchable by first line or alternate name.")
 
 
 if __name__ == "__main__":
