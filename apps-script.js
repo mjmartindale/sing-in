@@ -6,9 +6,10 @@
 // These are never stored in the spreadsheet.
 // ---------------------------------------------------------------------------
 const SESSIONS = {
-  '1': 'changeme-1',
-  '2': 'changeme-2',
-  '3': 'changeme-3',
+  '0': 'change-me-0',   // pre-conference suggestions
+  '1': 'change-me-1',
+  '2': 'change-me-2',
+  '3': 'change-me-3',
 };
 
 // ---------------------------------------------------------------------------
@@ -19,10 +20,10 @@ const SESSIONS = {
 // ---------------------------------------------------------------------------
 function setupSessionSheets() {
   const ss = SpreadsheetApp.getActiveSpreadsheet();
-  const headers = ['id', 'title', 'link', 'votes', 'current', 'done'];
+  const headers = ['id', 'title', 'link', 'base_votes', 'votes', 'current', 'done'];
 
-  for (let i = 1; i <= Object.keys(SESSIONS).length; i++) {
-    const name = `session_${i}`;
+  for (const key of Object.keys(SESSIONS).sort()) {
+    const name = `session_${key}`;
     let sheet = ss.getSheetByName(name);
     if (sheet) {
       sheet.clearContents();
@@ -40,6 +41,85 @@ function setupSessionSheets() {
 
   SpreadsheetApp.getUi().alert('Session sheets created: ' +
     Object.keys(SESSIONS).map(n => `session_${n}`).join(', '));
+}
+
+// ---------------------------------------------------------------------------
+// initSessionsFromBase — run this once before the conference starts.
+// Copies session_0 songs into session_1/2/3. The base_votes column is set as
+// a live formula referencing the session_0 votes cell, so it stays in sync.
+// Each live session then accumulates its own votes on top.
+// WARNING: overwrites any existing data rows in the live session sheets.
+// ---------------------------------------------------------------------------
+function initSessionsFromBase() {
+  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const source = ss.getSheetByName('session_0');
+  if (!source) {
+    SpreadsheetApp.getUi().alert('session_0 not found. Run setupSessionSheets first.');
+    return;
+  }
+
+  const allData = source.getDataRange().getValues();
+  if (allData.length <= 1) {
+    SpreadsheetApp.getUi().alert('session_0 has no songs to initialize from.');
+    return;
+  }
+
+  const srcHeaders     = allData[0].map(h => String(h).trim());
+  const srcRows        = allData.slice(1);
+  const checkboxRule   = SpreadsheetApp.newDataValidation().requireCheckbox().build();
+  const votesColLetter = colLetter(srcHeaders.indexOf('votes') + 1);
+
+  ['1', '2', '3'].forEach(n => {
+    const sheet = ss.getSheetByName(`session_${n}`);
+    if (!sheet) return;
+
+    const destHeaders = sheet.getRange(1, 1, 1, sheet.getLastColumn())
+      .getValues()[0].map(h => String(h).trim());
+    const dcol = name => destHeaders.indexOf(name);
+    const scol = name => srcHeaders.indexOf(name);
+    const sget = (row, name) => { const c = scol(name); return c >= 0 ? row[c] : ''; };
+
+    // Clear existing data rows (keep header)
+    const lastRow = sheet.getLastRow();
+    if (lastRow > 1) {
+      sheet.getRange(2, 1, lastRow - 1, destHeaders.length).clearContent().clearDataValidations();
+    }
+
+    // Write id/title/link/votes/current/done in one batch (base_votes set separately)
+    const newRows = srcRows.map(srcRow => {
+      const newRow = new Array(destHeaders.length).fill('');
+      const set = (name, val) => { const c = dcol(name); if (c >= 0) newRow[c] = val; };
+      set('id',      sget(srcRow, 'id'));
+      set('title',   sget(srcRow, 'title'));
+      set('link',    sget(srcRow, 'link'));
+      set('votes',   0);
+      set('current', false);
+      set('done',    false);
+      return newRow;
+    });
+    sheet.getRange(2, 1, newRows.length, destHeaders.length).setValues(newRows);
+
+    // Set base_votes as live cell references into session_0's votes column
+    const baseVotesCol = dcol('base_votes') + 1;
+    const formulas = srcRows.map((_, i) => [`=session_0!$${votesColLetter}$${i + 2}`]);
+    sheet.getRange(2, baseVotesCol, srcRows.length, 1).setFormulas(formulas);
+
+    // Apply checkbox validation
+    ['current', 'done'].forEach(colName => {
+      const c = dcol(colName) + 1;
+      if (c > 0) sheet.getRange(2, c, newRows.length, 1).setDataValidation(checkboxRule);
+    });
+  });
+
+  SpreadsheetApp.getUi().alert(
+    `Initialized session_1, session_2, and session_3 with ${srcRows.length} song(s) from session_0.`
+  );
+}
+
+function colLetter(n) {
+  let s = '';
+  while (n > 0) { s = String.fromCharCode(64 + (n % 26 || 26)) + s; n = Math.floor((n - 1) / 26); }
+  return s;
 }
 
 // ---------------------------------------------------------------------------
@@ -100,8 +180,9 @@ function doPost(e) {
     const set = (name, val) => { const c = col(name); if (c >= 0) newRow[c] = val; };
     set('id',         String(p.id || Utilities.getUuid()));
     set('title',      String(p.title || ''));
-    set('link',    String(p.link || ''));
-    set('votes',   1);
+    set('link',       String(p.link || ''));
+    set('base_votes', 0);
+    set('votes',      1);
     set('current',    false);
     set('done',       false);
     sheet.appendRow(newRow);

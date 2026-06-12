@@ -322,7 +322,8 @@ async function fetchSheet(name) {
 }
 
 // ── Boolean helpers ────────────────────────────────────────────────────────
-const isTrue = v => v === 'TRUE' || v === 'true' || v === true;
+const isTrue     = v => v === 'TRUE' || v === 'true' || v === true;
+const totalVotes = s => (Number(s.votes) || 0) + (Number(s.base_votes) || 0);
 
 // ── Write API ──────────────────────────────────────────────────────────────
 function apiWrite(params) {
@@ -420,12 +421,21 @@ function submitSuggestion(inputEl) {
 
   const existing = songs.find(s => s.title.toLowerCase() === title.toLowerCase() && !isTrue(s.done));
   if (existing) {
-    showMsg('warn', `"${title}" is already on the list — upvote it instead!`);
+    inputEl.value = '';
+    selectedSong  = null;
+    closeAC();
+    updateSubmitBtn(inputEl);
+    if (votedIds.has(existing.id)) {
+      showMsg('warn', `You've already voted for "${title}"!`);
+    } else {
+      upvote(existing.id);
+      showMsg('ok', `"${title}" is already in the queue — your vote was added!`);
+    }
     return;
   }
 
   const id = uid();
-  songs.push({ id, title, link, votes: '1', current: 'FALSE', done: 'FALSE' });
+  songs.push({ id, title, link, base_votes: '0', votes: '1', current: 'FALSE', done: 'FALSE' });
   votedIds.add(id);
   localStorage.setItem(`singin_voted_s${sessionNum}`, JSON.stringify([...votedIds]));
 
@@ -471,11 +481,12 @@ function openAC(items, inputEl) {
     t.textContent = song.title;
     div.appendChild(t);
 
-    const sub = [song.collection, song.number ? `#${song.number}` : ''].filter(Boolean).join(' · ');
-    if (sub) {
+    const inQueue = songs.some(s => s.title.toLowerCase() === song.title.toLowerCase() && !isTrue(s.done));
+    const subParts = [song.collection, song.number ? `#${song.number}` : '', inQueue ? '· already in queue' : ''].filter(Boolean);
+    if (subParts.length) {
       const s = document.createElement('div');
       s.className = 'ac-item-sub';
-      s.textContent = sub;
+      s.textContent = subParts.join(' ');
       div.appendChild(s);
     }
 
@@ -523,8 +534,6 @@ function renderApp() {
     </header>
     <main class="container">
       <div id="current-song-area"></div>
-      <p class="section-label">Song Queue</p>
-      <div id="song-list-area"></div>
       <section class="suggest-section" aria-label="Suggest a song">
         <h2>Suggest a Song</h2>
         <div id="suggest-msg"></div>
@@ -537,6 +546,8 @@ function renderApp() {
         </div>
         <button id="suggest-btn" class="suggest-btn" disabled>Add to Queue</button>
       </section>
+      <p class="section-label" style="margin-top:1.25rem">Song Queue</p>
+      <div id="song-list-area"></div>
     </main>`;
 
   renderCurrentSong();
@@ -567,7 +578,7 @@ function renderSongList() {
 
   const visible = songs
     .filter(s => s.title.trim() && !isTrue(s.done) && !isTrue(s.current))
-    .sort((a, b) => (Number(b.votes) || 0) - (Number(a.votes) || 0));
+    .sort((a, b) => totalVotes(b) - totalVotes(a));
 
   if (!visible.length) {
     area.innerHTML = '<div class="empty">No songs in the queue yet — suggest one below!</div>';
@@ -589,8 +600,8 @@ function renderSongList() {
     vBtn.className  = 'vote-btn';
     vBtn.disabled   = voted;
     vBtn.title      = voted ? 'You already voted for this song' : 'Vote for this song';
-    vBtn.setAttribute('aria-label', `${voted ? 'Voted' : 'Vote'} — ${song.votes || 0} votes`);
-    vBtn.innerHTML  = `<span class="vote-arrow">▲</span><span class="vote-count">${h(String(song.votes || 0))}</span><span class="vote-label">${voted ? 'voted' : 'vote'}</span>`;
+    vBtn.setAttribute('aria-label', `${voted ? 'Voted' : 'Vote'} — ${totalVotes(song)} votes`);
+    vBtn.innerHTML  = `<span class="vote-arrow">▲</span><span class="vote-count">${h(String(totalVotes(song)))}</span><span class="vote-label">${voted ? 'voted' : 'vote'}</span>`;
     if (!voted) vBtn.addEventListener('click', () => upvote(song.id));
     card.appendChild(vBtn);
 

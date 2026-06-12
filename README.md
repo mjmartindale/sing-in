@@ -51,13 +51,14 @@ Session passwords are **not** stored in the sheet (see step 5).
 3. At the top of the script, set your session passwords in the `SESSIONS` constant:
    ```js
    const SESSIONS = {
+     '0': 'your-password-for-session-0',   // pre-conference suggestions
      '1': 'your-password-for-session-1',
      '2': 'your-password-for-session-2',
      '3': 'your-password-for-session-3',
    };
    ```
    Use short, URL-safe strings (letters and numbers only). These passwords go into the QR code URLs and are never stored in the spreadsheet.
-4. Run the setup function: select `setupSessionSheets` from the function dropdown and click **Run**. This creates the `session_1`, `session_2`, `session_3` tabs with headers and checkbox columns pre-configured.
+4. Run the setup function: select `setupSessionSheets` from the function dropdown and click **Run**. This creates `session_0` through `session_3` tabs with headers pre-configured.
 5. Click **Deploy → New deployment**
    - Type: **Web app**
    - Execute as: **Me**
@@ -90,9 +91,23 @@ git push -u origin main
 
 Then in your repo: **Settings → Pages → Source: main branch / root**
 
-### 8. Generate QR Codes
+### 8. Collect Pre-Conference Suggestions (Session 0)
 
-Each session URL looks like:
+Before the conference, share the session 0 URL so people can suggest and vote on songs:
+
+```
+https://YOUR_USERNAME.github.io/sing-in/?s=0&pw=your-password-for-session-0
+```
+
+### 9. Initialize Live Sessions from Session 0
+
+Just before the first session starts, go to **Extensions → Apps Script**, select `initSessionsFromBase` from the function dropdown, and click **Run**. This copies session_0 songs into session_1, session_2, and session_3. Each song's `base_votes` cell is a live formula referencing the session_0 votes cell, so any last-minute votes in session_0 are reflected automatically. Each live session then accumulates its own additional votes independently, and the app displays the sum.
+
+> **Warning:** this overwrites any existing data in the live session sheets. Run it once, before the sessions begin.
+
+### 10. Generate QR Codes
+
+Each live session URL looks like:
 
 ```
 https://YOUR_USERNAME.github.io/sing-in/?s=1&pw=your-password-for-session-1
@@ -104,7 +119,7 @@ Use any QR code generator (e.g. qr-code-generator.com) to create QR codes for ea
 
 ## Facilitator Notes
 
-Everything is managed directly in Google Sheets:
+Everything is managed directly in Google Sheets. Each session tab (`session_0`, `session_1`, etc.) is independent:
 
 - **Mark current song**: check the `current` checkbox on the row being sung (uncheck the previous one)
 - **Retire a song**: check the `done` checkbox — it disappears from participants' view
