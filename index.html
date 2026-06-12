@@ -138,6 +138,7 @@
     /* Song info */
     .song-info { flex: 1; min-width: 0; }
     .song-title { font-weight: 600; font-size: 0.97rem; line-height: 1.3; }
+    .song-sub   { font-size: 0.78rem; color: var(--muted); margin-top: 0.15rem; }
     .song-badges { display: flex; gap: 0.35rem; margin-top: 0.3rem; flex-wrap: wrap; }
     .badge {
       font-size: 0.66rem;
@@ -560,8 +561,10 @@ function renderSongList() {
   const area = document.getElementById('song-list-area');
   if (!area) return;
 
+  const catalogByTitle = new Map(catalog.map(c => [c.title.toLowerCase(), c]));
+
   const visible = songs
-    .filter(s => !isTrue(s.done) && !isTrue(s.current))
+    .filter(s => s.title.trim() && !isTrue(s.done) && !isTrue(s.current))
     .sort((a, b) => (Number(b.votes) || 0) - (Number(a.votes) || 0));
 
   if (!visible.length) {
@@ -596,6 +599,17 @@ function renderSongList() {
     titleEl.className   = 'song-title';
     titleEl.textContent = song.title;
     info.appendChild(titleEl);
+
+    const catalogEntry = catalogByTitle.get(song.title.toLowerCase());
+    if (catalogEntry) {
+      const sub = [catalogEntry.collection, catalogEntry.number ? `#${catalogEntry.number}` : ''].filter(Boolean).join(' · ');
+      if (sub) {
+        const subEl = document.createElement('div');
+        subEl.className   = 'song-sub';
+        subEl.textContent = sub;
+        info.appendChild(subEl);
+      }
+    }
 
     card.appendChild(info);
 
