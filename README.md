@@ -68,10 +68,6 @@ Session passwords are **not** stored in the sheet (see step 5).
 
 ### 6. Configure the App
 
-```bash
-cp config.example.js config.js
-```
-
 Edit `config.js`:
 
 ```js
@@ -81,8 +77,6 @@ const SHEET_ID = "your-google-sheet-id";
 
 The Sheet ID is the long string in your Sheet's URL:
 `https://docs.google.com/spreadsheets/d/`**`THIS_PART`**`/edit`
-
-`config.js` is gitignored and must never be committed.
 
 ### 7. Deploy to GitHub Pages
 
@@ -126,8 +120,7 @@ The app polls for changes every 20 seconds, so participants see updates automati
 ```
 sing-in/
 ├── index.html            # Single-page app (the whole frontend)
-├── config.js             # Gitignored — fill in your URLs
-├── config.example.js     # Template for config.js
+├── config.js             # Fill in your Sheet ID and Apps Script URL
 ├── apps-script.js        # Paste into Google Apps Script
 ├── scrape-catalog.py     # Helper to generate catalog.csv from the Gospel Library
 ├── .gitignore
